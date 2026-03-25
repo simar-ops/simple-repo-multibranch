@@ -2,47 +2,41 @@ pipeline {
     agent any
 
     environment {
-        // This must match the ID you created in Jenkins Credentials
-        SSH_CREDS = 'github-ssh-key' 
+        SSH_CREDS = 'github-ssh-key'
         REPO_URL = 'git@github.com:simar-ops/simple-repo-multibranch.git'
     }
 
     stages {
-        stage('Clean & Setup') {
+        stage('Identity & Branch Check') {
             steps {
                 script {
-                    // Set your professional DevOps identity
                     sh 'git config user.email "simar-ops@users.noreply.github.com"'
                     sh 'git config user.name "Simar"'
+                    
+                    // Identify which branch triggered the build
+                    def branch = sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
+                    if (branch == 'HEAD') {
+                        branch = sh(script: "git name-rev --name-only HEAD | sed 's|remotes/origin/||' | sed 's|tags/||'", returnStdout: true).trim()
+                    }
+                    env.GIT_BRANCH_NAME = branch
+                    echo "Working on branch: ${env.GIT_BRANCH_NAME}"
                 }
             }
         }
 
-        stage('Sync Branches') {
+        stage('Push to GitHub') {
             steps {
                 sshagent([env.SSH_CREDS]) {
                     script {
-                        def branches = ['main', 'dev']
+                        def currentBranch = env.GIT_BRANCH_NAME
                         
-                        branches.each { br ->
-                            echo "--- Processing Branch: ${br} ---"
-                            
-                            // 1. Switch to the branch (create if it doesn't exist locally in Jenkins)
-                            sh "git checkout ${br} || git checkout -b ${br}"
-                            
-                            // 2. Pull latest from GitHub to prevent 'Push Rejected' errors
-                            // The '|| true' ensures the pipeline doesn't crash if the branch is brand new
-                            sh "git pull origin ${br} --rebase || echo 'New branch or nothing to pull'"
+                        // Clean up the local Jenkins state to match GitHub exactly
+                        sh "git fetch origin"
+                        sh "git checkout -B ${currentBranch} origin/${currentBranch}"
 
-                            // 3. If we are on 'dev', bring in the latest changes from 'main'
-                            if (br == 'dev') {
-                                echo "Merging main into dev..."
-                                sh "git merge main --no-edit"
-                            }
-
-                            // 4. Push the synchronized branch back to GitHub
-                            sh "git push ${env.REPO_URL} ${br}"
-                        }
+                        // Push only the current branch
+                        echo "Finalizing push specifically for ${currentBranch}..."
+                        sh "git push ${env.REPO_URL} ${currentBranch}"
                     }
                 }
             }
@@ -51,10 +45,10 @@ pipeline {
 
     post {
         success {
-            echo "Successfully synchronized main and dev branches!"
+            echo "Successfully synchronized branches for multibranch pipeline project!"
         }
         failure {
-            echo "Pipeline failed. Check the console output for git conflicts or credential issues."
+            echo "Push failed. This usually means the branch on GitHub moved while Jenkins was running."
         }
     }
 }
