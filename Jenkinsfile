@@ -35,19 +35,29 @@ pipeline {
                     script {
                         def currentBranch = env.GIT_BRANCH_NAME
                         
-                        // 1. Pull latest to avoid "Push Rejected" conflicts
+                        // 1. Initial pull to ensure Jenkins workspace is current
                         sh "git pull origin ${currentBranch} --rebase || echo 'No remote changes to pull'"
 
                         // 2. Automated Sync: If pushing to main, also update dev
                         if (currentBranch == 'main') {
                             echo "Merging main changes into dev branch..."
+                            
+                            // Switch to dev and update it
                             sh "git checkout dev || git checkout -b dev"
+                            sh "git pull origin dev --rebase || echo 'New dev branch'"
+                            
+                            // Merge and Push dev
                             sh "git merge main --no-edit"
                             sh "git push ${env.REPO_URL} dev"
-                            sh "git checkout main" // Switch back to main to finish
+                            
+                            // IMPORTANT: Switch back to main and RE-PULL 
+                            // This prevents the 'non-fast-forward' error
+                            sh "git checkout main"
+                            sh "git pull origin main --rebase"
                         }
 
-                        // 3. Push the current branch back to GitHub
+                        // 3. Final push of the current branch back to GitHub
+                        echo "Finalizing push for ${currentBranch}..."
                         sh "git push ${env.REPO_URL} ${currentBranch}"
                     }
                 }
@@ -57,11 +67,10 @@ pipeline {
 
     post {
         success {
-            // Your requested success message
             echo "Successfully synchronized branches for multibranch pipeline project!"
         }
         failure {
-            echo "Pipeline failed. Check the logs to see if there is a Merge Conflict."
+            echo "Pipeline failed. Check the logs for Merge Conflicts or Push Rejections."
         }
     }
 }
